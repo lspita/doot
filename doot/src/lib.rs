@@ -1,14 +1,34 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
+use std::fmt::{Debug, Display};
+
+pub mod lexer;
+
+pub trait Source {
+    fn name(&self) -> &str;
+    fn chars(&self) -> impl Iterator<Item = char>;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourcePosition {
+    line: u32,
+    col: u32,
+}
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl SourcePosition {
+    pub fn new(line: u32, col: u32) -> Self {
+        Self { line, col }
+    }
+
+    pub fn line(&self) -> u32 {
+        self.line
+    }
+
+    pub fn col(&self) -> u32 {
+        self.col
+    }
+}
+
+impl Display for SourcePosition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.line, self.col)
     }
 }
