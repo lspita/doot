@@ -1,79 +1,46 @@
-use std::collections::LinkedList;
+use std::{char, error::Error, fmt::Display};
 
-use regex::{Captures, Regex};
-use tokens::{Token, TokenType};
+use parsing::NumberParseError;
+use state::StateManager;
+use tokens::Token;
 
+mod matchers;
+mod parsing;
+mod state;
 pub mod tokens;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenizationError {
     InvalidToken(String),
+    InvalidEscape(String),
+    NoEscapeChar,
+    NoEscapeValue(String),
+    InvalidHex(String),
+    InvalidUnicode(String),
+    InvalidNumberRadix(char),
+    NumberParseError(NumberParseError),
 }
 
-enum ParseState {
-    Normal,
-    CompositeString,
-    RawString(usize),
-}
-
-struct StateManager {
-    states: LinkedList<ParseState>,
-}
-
-impl StateManager {
-    const NO_STATE_ERROR: &str = "Lexer has not state";
-
-    fn new() -> Self {
-        Self {
-            states: LinkedList::from([ParseState::Normal]),
+impl Error for TokenizationError {}
+impl Display for TokenizationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenizationError::InvalidToken(token) => format!("invalid token {}", token),
+            TokenizationError::InvalidEscape(escape) => format!("invalid escape {}", escape),
+            TokenizationError::NoEscapeChar => "missing escaped character".to_string(),
+            TokenizationError::NoEscapeValue(escape) => {
+                format!("missing value for escape {}", escape)
+            }
+            TokenizationError::InvalidHex(hex) => format!("invalid hex {}", hex),
+            TokenizationError::InvalidUnicode(unicode) => {
+                format!("invalid unicode value {}", unicode)
+            }
+            TokenizationError::InvalidNumberRadix(radix) => {
+                format!("invalid number radix {}", radix)
+            }
+            TokenizationError::NumberParseError(err) => format!("number parse error: {}", err),
         }
-    }
-
-    fn get(&self) -> &ParseState {
-        self.states.front().expect(Self::NO_STATE_ERROR)
-    }
-
-    fn push(&mut self, state: ParseState) {
-        self.states.push_front(state);
-    }
-
-    fn pop(&mut self) {
-        self.states.pop_front().expect(Self::NO_STATE_ERROR);
-    }
-}
-
-struct Matcher {
-    regex: Regex,
-    transformer: Box<dyn FnMut(Captures, &mut StateManager) -> TokenType>,
-}
-
-impl Matcher {
-    fn regex(
-        re: &str,
-        transformer: Box<dyn FnMut(Captures, &mut StateManager) -> TokenType>,
-    ) -> Self {
-        Self {
-            regex: Regex::new(re).unwrap(),
-            transformer,
-        }
-    }
-
-    fn regex_full(
-        re: &str,
-        mut mapper: Box<dyn FnMut(String, &mut StateManager) -> TokenType>,
-    ) -> Self {
-        Self::regex(
-            re,
-            Box::new(move |c, s| mapper(String::from(c.get(0).unwrap().as_str()), s)),
-        )
-    }
-
-    fn text(source: &str, mapper: Box<dyn FnMut(String, &mut StateManager) -> TokenType>) -> Self {
-        Self::regex_full(&regex::escape(source), mapper)
-    }
-
-    fn text_simple(source: &str, token: TokenType) -> Self {
-        Self::text(source, Box::new(move |_, _| token.clone()))
+        .fmt(f)
     }
 }
 
@@ -89,79 +56,24 @@ impl Lexer {
             state: StateManager::new(),
         }
     }
-
-    fn matchers(&self) -> Vec<Matcher> {
-        match self.state.get() {
-            ParseState::Normal => vec![
-                // symbols
-                Matcher::text_simple("+", TokenType::Plus),
-                Matcher::text_simple("-", TokenType::Minus),
-                Matcher::text_simple("*", TokenType::Asterisk),
-                Matcher::text_simple("/", TokenType::Slash),
-                Matcher::text_simple("(", TokenType::LeftParen),
-                Matcher::text_simple(")", TokenType::RightParen),
-                Matcher::text_simple("[", TokenType::LeftSquare),
-                Matcher::text_simple("]", TokenType::RightSquare),
-                Matcher::text_simple("{", TokenType::LeftBrace),
-                Matcher::text_simple("}", TokenType::RightBrace),
-                Matcher::text_simple(",", TokenType::Comma),
-                Matcher::text_simple(".", TokenType::Dot),
-                Matcher::text_simple("=", TokenType::Equal),
-                Matcher::text_simple("==", TokenType::DoubleEqual),
-                Matcher::text_simple("!", TokenType::Bang),
-                Matcher::text_simple("!=", TokenType::BangEqual),
-                Matcher::text_simple(">", TokenType::Greater),
-                Matcher::text_simple(">=", TokenType::GreaterEqual),
-                Matcher::text_simple("<", TokenType::Less),
-                Matcher::text_simple("<=", TokenType::LessEqual),
-                Matcher::text_simple("&", TokenType::Ampersand),
-                Matcher::text_simple("&&", TokenType::DoubleAmpersand),
-                Matcher::text_simple("|", TokenType::Pipe),
-                Matcher::text_simple("||", TokenType::DoublePipe),
-                Matcher::text(
-                    "\"",
-                    Box::new(|_, state| {
-                        state.push(ParseState::CompositeString);
-                        TokenType::DoubleQuotes
-                    }),
-                ),
-                Matcher::regex_full(
-                    r"#*`",
-                    Box::new(|token, state| {
-                        state.push(ParseState::RawString(
-                            token.chars().take_while(|c| *c == '#').count(),
-                        ));
-                        TokenType::PoundStringOpen
-                    }),
-                ),
-                // keywords
-                Matcher::text_simple("let", TokenType::Let),
-                Matcher::text_simple("var", TokenType::Var),
-                Matcher::text_simple("const", TokenType::Const),
-                Matcher::text_simple("if", TokenType::If),
-                Matcher::text_simple("else", TokenType::Else),
-                Matcher::text_simple("for", TokenType::For),
-                Matcher::text_simple("while", TokenType::While),
-                Matcher::text_simple("class", TokenType::Class),
-                Matcher::text_simple("fn", TokenType::Fn),
-                Matcher::text_simple("return", TokenType::Return),
-                // literals
-                Matcher::text_simple("null", TokenType::Null),
-                Matcher::text_simple("true", TokenType::BoolLiteral(true)),
-                Matcher::text_simple("false", TokenType::BoolLiteral(false)),
-            ],
-            ParseState::CompositeString => vec![],
-            ParseState::RawString(pounds) => vec![],
-        }
-    }
-
-    fn parse_buffer(s: &str) -> Option<TokenType> {}
 }
 
 impl Iterator for Lexer {
     type Item = Result<Token, TokenizationError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        todo!()
+        let mut buffer = String::new();
+        let mut matchers = self.state.get().matchers();
+        let mut match_candidate = None;
+        for ch in self.source.by_ref() {
+            if ch.is_whitespace() && self.state.get().ignore_space() {
+                if let Some(matcher) = match_candidate {
+                    // return Some(matcher.transform(&buffer, &mut self.state));
+                }
+            }
+            match_candidate = Some(&matchers[0]);
+            buffer.push(ch);
+        }
+        return None;
     }
 }

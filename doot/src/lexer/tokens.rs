@@ -31,34 +31,33 @@ impl Display for Token {
 #[derive(Debug, Clone)]
 pub enum TokenType {
     // symbols
-    Plus,             // +
-    Minus,            // -
-    Asterisk,         // *
-    Slash,            // /
-    LeftParen,        // (
-    RightParen,       // )
-    LeftSquare,       // [
-    RightSquare,      // ]
-    LeftBrace,        // {
-    RightBrace,       // }
-    Comma,            // ,
-    Dot,              // .
-    Equal,            // =
-    DoubleEqual,      // ==
-    Bang,             // !
-    BangEqual,        // !=
-    Greater,          // >
-    GreaterEqual,     // >=
-    Less,             // <
-    LessEqual,        // <=
-    Ampersand,        // &
-    DoubleAmpersand,  // &&
-    Pipe,             // |
-    DoublePipe,       // ||
-    DoubleQuotes,     // "
-    PoundStringOpen,  // #`
-    PoundStringClose, // `#
-    DollarLeftBrace,  // ${
+    Plus,            // +
+    Minus,           // -
+    Asterisk,        // *
+    Slash,           // /
+    LeftParen,       // (
+    RightParen,      // )
+    LeftSquare,      // [
+    RightSquare,     // ]
+    LeftBrace,       // {
+    RightBrace,      // }
+    Comma,           // ,
+    Dot,             // .
+    Equal,           // =
+    EqualEqual,      // ==
+    Bang,            // !
+    BangEqual,       // !=
+    Greater,         // >
+    GreaterEqual,    // >=
+    Less,            // <
+    LessEqual,       // <=
+    Ampersand,       // &
+    DoubleAmpersand, // &&
+    Pipe,            // |
+    DoublePipe,      // ||
+    StringOpen,      // ", #`
+    StringClose,     // ", `#
+    DollarLeftBrace, // ${
 
     // keywords
     Let,    // let
@@ -73,10 +72,10 @@ pub enum TokenType {
     Return, // return
 
     // literals
-    Identifier(String),    // foo
-    StringLiteral(String), // "hello, world"
+    Null,                  // null
     BoolLiteral(bool),     // true, false
+    Identifier(String),    // foo
     IntLiteral(i64),       // 1234
     FloatLiteral(f64),     // 1234.5678
-    Null,                  // null
+    StringLiteral(String), // "hello, world"
 }
