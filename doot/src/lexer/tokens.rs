@@ -1,35 +1,5 @@
-use std::fmt::Display;
-
-use crate::SourcePosition;
-
-#[derive(Debug)]
-pub struct Token {
-    value: TokenType,
-    pos: SourcePosition,
-}
-
-impl Token {
-    pub fn new(value: TokenType, pos: SourcePosition) -> Self {
-        Self { value, pos }
-    }
-
-    pub fn value(&self) -> &TokenType {
-        &self.value
-    }
-
-    pub fn pos(&self) -> &SourcePosition {
-        &self.pos
-    }
-}
-
-impl Display for Token {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}@{}", self.value, self.pos)
-    }
-}
-
 #[derive(Debug, Clone)]
-pub enum TokenType {
+pub enum Token {
     // symbols
     Plus,            // +
     Minus,           // -

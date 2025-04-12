@@ -32,3 +32,28 @@ impl Display for SourcePosition {
         write!(f, "{}:{}", self.line, self.col)
     }
 }
+
+#[derive(Debug)]
+pub struct SourceElement<T> {
+    value: T,
+    start: SourcePosition,
+    stop: SourcePosition,
+}
+
+impl<T> SourceElement<T> {
+    pub fn new(value: T, start: SourcePosition, stop: SourcePosition) -> Self {
+        Self { value, start, stop }
+    }
+
+    pub fn value(&self) -> &T {
+        &self.value
+    }
+
+    pub fn start(&self) -> &SourcePosition {
+        &self.start
+    }
+
+    pub fn stop(&self) -> &SourcePosition {
+        &self.stop
+    }
+}
