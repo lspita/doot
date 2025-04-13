@@ -17,6 +17,34 @@ pub(super) enum LexerState {
 
 impl LexerState {
     pub(super) fn matchers(&self) -> Vec<Box<dyn Matcher<Token>>> {
+        fn number_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
+            ChainMatcher::new(
+                [
+                    DefaultMatcher::prefix(prefix),
+                    DefaultMatcher::take_while(
+                        |buff, ch| {
+                            if buff.len() == 1 {
+                                ch == '.' || ch.is_ascii_digit()
+                            } else {
+                                ch == '_' || ch == '.' || ch.is_alphanumeric()
+                            }
+                        },
+                        |value, _| Ok(value.to_string()),
+                    ),
+                ],
+                |_, [_, value], _| {
+                    if value.contains('.') {
+                        parsing::parse_float(&value)
+                            .map(Token::FloatLiteral)
+                            .map_err(TokenizationError::NumberParse)
+                    } else {
+                        parsing::parse_int(&value)
+                            .map(Token::IntLiteral)
+                            .map_err(TokenizationError::NumberParse)
+                    }
+                },
+            )
+        }
         match self {
             Self::Normal => vec![
                 // symbols
@@ -82,77 +110,58 @@ impl LexerState {
                     },
                     |value, _| Ok(Token::Identifier(value.to_string())),
                 ),
-                DefaultMatcher::take_while(
-                    |buff, ch| {
-                        if buff.len() == 1 {
-                            ch == '.' || ch.is_ascii_digit()
-                        } else {
-                            "_.".contains(ch) || ch.is_alphanumeric()
-                        }
-                    },
-                    |value, _| {
-                        if value.contains('.') {
-                            parsing::parse_float(value)
-                                .map(Token::FloatLiteral)
-                                .map_err(TokenizationError::NumberParse)
-                        } else {
-                            parsing::parse_int(value)
-                                .map(Token::IntLiteral)
-                                .map_err(TokenizationError::NumberParse)
-                        }
-                    },
+                number_literal(""),
+                number_literal("+"),
+                number_literal("-"),
+            ],
+            Self::CompositeString => vec![
+                DefaultMatcher::collector(["\"", "${", "\\"], |value, _, _| {
+                    Ok(Token::StringLiteral(value.to_string()))
+                }),
+                DefaultMatcher::text("\"", |_, state| {
+                    state.pop();
+                    Ok(Token::StringClose)
+                }),
+                DefaultMatcher::text("${", |_, state| {
+                    state.push(Self::Normal);
+                    Ok(Token::DollarLeftBrace)
+                }),
+                DefaultMatcher::text("\\", |_, _| Err(TokenizationError::NoEscape)),
+                ChainMatcher::new(
+                    [
+                        DefaultMatcher::prefix("\\"),
+                        DefaultMatcher::conditions(
+                            vec![Box::new(|_: &str, ch: char| !ch.is_whitespace())],
+                            |val, _| {
+                                parsing::replace_escape(val)
+                                    .map(|ch| ch.to_string())
+                                    .map_err(TokenizationError::EscapeParse)
+                            },
+                        ),
+                    ],
+                    |_, [_, escaped], _| Ok(Token::StringLiteral(escaped.clone())),
+                ),
+                ChainMatcher::new(
+                    [
+                        DefaultMatcher::prefix("\\u{"),
+                        DefaultMatcher::filtered_collector(
+                            ["}"],
+                            |_, ch| !ch.is_whitespace(),
+                            |hex, _, _| {
+                                parsing::parse_unicode(hex)
+                                    .map(|c| c.to_string())
+                                    .map_err(TokenizationError::UnicodeParse)
+                            },
+                        ),
+                    ],
+                    |_, [_, unicode], _| Ok(Token::StringLiteral(unicode.clone())),
                 ),
             ],
-            Self::CompositeString => {
-                vec![
-                    DefaultMatcher::collector(["\"", "${", "\\"], |value, _, _| {
-                        Ok(Token::StringLiteral(value.to_string()))
-                    }),
-                    DefaultMatcher::text("\"", |_, state| {
-                        state.pop();
-                        Ok(Token::StringClose)
-                    }),
-                    DefaultMatcher::text("${", |_, state| {
-                        state.push(Self::Normal);
-                        Ok(Token::DollarLeftBrace)
-                    }),
-                    DefaultMatcher::text("\\", |_, _| Err(TokenizationError::NoEscape)),
-                    ChainMatcher::new(
-                        [
-                            DefaultMatcher::prefix("\\"),
-                            DefaultMatcher::conditions(
-                                vec![Box::new(|_: &str, ch: char| !ch.is_whitespace())],
-                                |val, _| {
-                                    parsing::replace_escape(val)
-                                        .map(|ch| ch.to_string())
-                                        .map_err(TokenizationError::EscapeParse)
-                                },
-                            ),
-                        ],
-                        |_, [_, escaped], _| Ok(Token::StringLiteral(escaped.clone())),
-                    ),
-                    ChainMatcher::new(
-                        [
-                            DefaultMatcher::prefix("\\u{"),
-                            DefaultMatcher::filtered_collector(
-                                ["}"],
-                                |_, ch| !ch.is_whitespace(),
-                                |hex, _, _| {
-                                    parsing::parse_unicode(hex)
-                                        .map(|c| c.to_string())
-                                        .map_err(TokenizationError::UnicodeParse)
-                                },
-                            ),
-                        ],
-                        |_, [_, unicode], _| Ok(Token::StringLiteral(unicode.clone())),
-                    ),
-                ]
-            }
             Self::RawString(pounds) => {
-                let pound_terminator = format!(
-                    "`{}",
-                    std::iter::repeat('#').take(*pounds).collect::<String>()
-                );
+                let pound_terminator = ['`'] // ` followed by # `pounds` times
+                    .into_iter()
+                    .chain(std::iter::repeat('#').take(*pounds))
+                    .collect::<String>();
                 vec![
                     DefaultMatcher::collector([&pound_terminator], |value, _, _| {
                         Ok(Token::StringLiteral(value.to_string()))
