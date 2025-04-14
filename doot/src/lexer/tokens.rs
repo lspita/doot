@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Token {
     // symbols
     Plus,            // +
@@ -14,7 +14,7 @@ pub enum Token {
     Comma,           // ,
     Dot,             // .
     Equal,           // =
-    EqualEqual,      // ==
+    DoubleEqual,     // ==
     Bang,            // !
     BangEqual,       // !=
     Greater,         // >
@@ -47,5 +47,5 @@ pub enum Token {
     Identifier(String),    // foo
     IntLiteral(i64),       // 1234
     FloatLiteral(f64),     // 1234.5678
-    StringLiteral(String), // "hello, world"
+    StringLiteral(String), // "hello, world" (the content inside the quotes)
 }

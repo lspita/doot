@@ -40,7 +40,7 @@ impl Display for NumberParseError {
     }
 }
 
-pub(super) fn replace_escape(source: &str) -> Result<char, EscapeParseError> {
+pub(super) fn escape(source: &str) -> Result<char, EscapeParseError> {
     // https://doc.rust-lang.org/reference/tokens.html#ascii-escapes
     match source {
         r"\n" => Ok('\n'),
@@ -48,6 +48,7 @@ pub(super) fn replace_escape(source: &str) -> Result<char, EscapeParseError> {
         r"\t" => Ok('\t'),
         r"\\" => Ok('\\'),
         r"\0" => Ok('\0'),
+        r"\$" => Ok('$'), // escape \$ because of ${ in strings
         c if c == r"\u" => Err(EscapeParseError::NoValue(c.to_string())),
         source => Err(EscapeParseError::InvalidEscape(source.to_string())),
     }
@@ -146,11 +147,10 @@ mod tests {
 
     use rstest::rstest;
 
-    use crate::lexer::parsing::{
-        NumberParseError, parse_float, parse_int, parse_unicode, replace_escape,
+    use super::{
+        EscapeParseError, NumberParseError, UnicodeParseError, escape, parse_float, parse_int,
+        parse_unicode,
     };
-
-    use super::{EscapeParseError, UnicodeParseError};
 
     #[rstest]
     #[case(r"\n", '\n')]
@@ -158,8 +158,9 @@ mod tests {
     #[case(r"\t", '\t')]
     #[case(r"\\", '\\')]
     #[case(r"\0", '\0')]
+    #[case(r"\$", '$')]
     fn escape_ok(#[case] source: &str, #[case] expected: char) {
-        let result = replace_escape(source);
+        let result = escape(source);
         assert!(result.is_ok());
         assert_eq!(expected, result.unwrap());
     }
@@ -168,7 +169,7 @@ mod tests {
     #[case(r"\u", EscapeParseError::NoValue(r"\u".to_string()))]
     #[case(r"\a", EscapeParseError::InvalidEscape(r"\a".to_string()))]
     fn escape_fail(#[case] source: &str, #[case] expected: EscapeParseError) {
-        let result = replace_escape(source);
+        let result = escape(source);
         assert!(result.is_err());
         assert_eq!(expected, result.unwrap_err());
     }

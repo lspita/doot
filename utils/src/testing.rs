@@ -7,14 +7,16 @@ pub fn assert_panics(run: impl FnOnce()) {
 
 #[cfg(test)]
 mod tests {
+    use rstest::rstest;
+
     use super::assert_panics;
 
-    #[test]
+    #[rstest]
     fn panics() {
         assert_panics(|| panic!());
     }
 
-    #[test]
+    #[rstest]
     #[should_panic]
     fn not_panics() {
         assert_panics(|| { /*no panic */ });

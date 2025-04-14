@@ -8,45 +8,64 @@ use super::{
     tokens::Token,
 };
 
-#[derive(PartialEq, Eq)]
-pub(super) enum LexerState {
-    Normal,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LexerState {
+    Normal(bool),
     CompositeString,
     RawString(usize),
 }
 
 impl LexerState {
     pub(super) fn matchers(&self) -> Vec<Box<dyn Matcher<Token>>> {
-        fn number_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
+        fn int_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
             ChainMatcher::new(
                 [
-                    DefaultMatcher::prefix(prefix),
+                    DefaultMatcher::fixed_text(prefix),
                     DefaultMatcher::take_while(
                         |buff, ch| {
                             if buff.len() == 1 {
-                                ch == '.' || ch.is_ascii_digit()
+                                ch.is_ascii_digit()
+                            } else {
+                                ch == '_' || ch.is_alphanumeric()
+                            }
+                        },
+                        1,
+                        |value, _| Ok(value.to_string()),
+                    ),
+                ],
+                |val, _, _| {
+                    parsing::parse_int(val)
+                        .map(Token::IntLiteral)
+                        .map_err(TokenizationError::NumberParse)
+                },
+            )
+        }
+
+        fn float_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
+            ChainMatcher::new(
+                [
+                    DefaultMatcher::fixed_text(prefix),
+                    DefaultMatcher::take_while(
+                        |buff, ch| {
+                            if buff.len() == 1 {
+                                ch.is_ascii_digit()
                             } else {
                                 ch == '_' || ch == '.' || ch.is_alphanumeric()
                             }
                         },
+                        1,
                         |value, _| Ok(value.to_string()),
                     ),
                 ],
-                |_, [_, value], _| {
-                    if value.contains('.') {
-                        parsing::parse_float(&value)
-                            .map(Token::FloatLiteral)
-                            .map_err(TokenizationError::NumberParse)
-                    } else {
-                        parsing::parse_int(&value)
-                            .map(Token::IntLiteral)
-                            .map_err(TokenizationError::NumberParse)
-                    }
+                |val, _, _| {
+                    parsing::parse_float(val)
+                        .map(Token::FloatLiteral)
+                        .map_err(TokenizationError::NumberParse)
                 },
             )
         }
-        match self {
-            Self::Normal => vec![
+        match *self {
+            Self::Normal(from_string) => vec![
                 // symbols
                 DefaultMatcher::simple_text("+", Token::Plus),
                 DefaultMatcher::simple_text("-", Token::Minus),
@@ -56,12 +75,22 @@ impl LexerState {
                 DefaultMatcher::simple_text(")", Token::RightParen),
                 DefaultMatcher::simple_text("[", Token::LeftSquare),
                 DefaultMatcher::simple_text("]", Token::RightSquare),
-                DefaultMatcher::simple_text("{", Token::LeftBrace),
-                DefaultMatcher::simple_text("}", Token::RightBrace),
+                DefaultMatcher::text("{", move |_, state| {
+                    if from_string {
+                        state.push(Self::Normal(true));
+                    }
+                    Ok(Token::LeftBrace)
+                }),
+                DefaultMatcher::text("}", move |_, state| {
+                    if from_string {
+                        state.pop();
+                    }
+                    Ok(Token::RightBrace)
+                }),
                 DefaultMatcher::simple_text(",", Token::Comma),
                 DefaultMatcher::simple_text(".", Token::Dot),
                 DefaultMatcher::simple_text("=", Token::Equal),
-                DefaultMatcher::simple_text("==", Token::EqualEqual),
+                DefaultMatcher::simple_text("==", Token::DoubleEqual),
                 DefaultMatcher::simple_text("!", Token::Bang),
                 DefaultMatcher::simple_text("!=", Token::BangEqual),
                 DefaultMatcher::simple_text(">", Token::Greater),
@@ -79,6 +108,7 @@ impl LexerState {
                 DefaultMatcher::filtered_collector(
                     ["`"],
                     |_, ch| ch == '#' || ch == '`',
+                    true,
                     |pounds, _, state| {
                         state.push(Self::RawString(pounds.len()));
                         Ok(Token::StringOpen)
@@ -108,14 +138,21 @@ impl LexerState {
                                 ch.is_alphanumeric()
                             }
                     },
+                    1,
                     |value, _| Ok(Token::Identifier(value.to_string())),
                 ),
-                number_literal(""),
-                number_literal("+"),
-                number_literal("-"),
+                int_literal(""),
+                int_literal("-"),
+                float_literal(""),
+                float_literal("-"),
             ],
             Self::CompositeString => vec![
-                DefaultMatcher::collector(["\"", "${", "\\"], |value, _, _| {
+                DefaultMatcher::take_while(
+                    |buff, _| !["\"", "${", "\\"].iter().any(|t| buff.ends_with(t)), // unclosed string literals
+                    0,
+                    |value, _| Ok(Token::StringLiteral(value.to_string())),
+                ),
+                DefaultMatcher::collector(["\"", "${", "\\"], false, |value, _, _| {
                     Ok(Token::StringLiteral(value.to_string()))
                 }),
                 DefaultMatcher::text("\"", |_, state| {
@@ -123,30 +160,40 @@ impl LexerState {
                     Ok(Token::StringClose)
                 }),
                 DefaultMatcher::text("${", |_, state| {
-                    state.push(Self::Normal);
+                    state.push(Self::Normal(true));
                     Ok(Token::DollarLeftBrace)
                 }),
-                DefaultMatcher::text("\\", |_, _| Err(TokenizationError::NoEscape)),
                 ChainMatcher::new(
                     [
-                        DefaultMatcher::prefix("\\"),
+                        DefaultMatcher::fixed_text("\\"),
                         DefaultMatcher::conditions(
                             vec![Box::new(|_: &str, ch: char| !ch.is_whitespace())],
-                            |val, _| {
-                                parsing::replace_escape(val)
-                                    .map(|ch| ch.to_string())
-                                    .map_err(TokenizationError::EscapeParse)
-                            },
+                            |val, _| Ok(val.to_string()),
                         ),
                     ],
-                    |_, [_, escaped], _| Ok(Token::StringLiteral(escaped.clone())),
+                    |_, [prefix, escaped], _| {
+                        parsing::escape(&format!("{}{}", prefix, escaped))
+                            .map(|ch| Token::StringLiteral(ch.to_string()))
+                            .map_err(TokenizationError::EscapeParse)
+                    },
                 ),
                 ChainMatcher::new(
                     [
-                        DefaultMatcher::prefix("\\u{"),
+                        DefaultMatcher::fixed_text("\\"),
+                        DefaultMatcher::conditions(
+                            vec![Box::new(|_: &str, ch: char| ch.is_whitespace())],
+                            |val, _| Ok(val.to_string()),
+                        ),
+                    ],
+                    |_, _, _| Err(TokenizationError::NoEscape),
+                ),
+                ChainMatcher::new(
+                    [
+                        DefaultMatcher::fixed_text("\\u{"),
                         DefaultMatcher::filtered_collector(
                             ["}"],
                             |_, ch| !ch.is_whitespace(),
+                            true,
                             |hex, _, _| {
                                 parsing::parse_unicode(hex)
                                     .map(|c| c.to_string())
@@ -160,16 +207,27 @@ impl LexerState {
             Self::RawString(pounds) => {
                 let pound_terminator = ['`'] // ` followed by # `pounds` times
                     .into_iter()
-                    .chain(std::iter::repeat('#').take(*pounds))
+                    .chain(std::iter::repeat('#').take(pounds))
                     .collect::<String>();
                 vec![
-                    DefaultMatcher::collector([&pound_terminator], |value, _, _| {
-                        Ok(Token::StringLiteral(value.to_string()))
-                    }),
-                    DefaultMatcher::text(&pound_terminator, |_, state| {
+                    DefaultMatcher::collector(
+                        [pound_terminator.clone().as_ref()],
+                        false,
+                        |value, _, _| Ok(Token::StringLiteral(value.to_string())),
+                    ),
+                    DefaultMatcher::text(pound_terminator.clone().as_ref(), |_, state| {
                         state.pop();
                         Ok(Token::StringClose)
                     }),
+                    {
+                        // unclosed string literals
+                        let terminator = pound_terminator.clone();
+                        DefaultMatcher::take_while(
+                            move |buff, _| !buff.ends_with(&terminator),
+                            0,
+                            |value, _| Ok(Token::StringLiteral(value.to_string())),
+                        )
+                    },
                 ]
             }
         }
@@ -185,7 +243,7 @@ impl LexerStateManager {
         let mut instance = Self {
             states: LinkedList::new(),
         };
-        instance.push(LexerState::Normal);
+        instance.push(LexerState::Normal(false));
         instance
     }
 

@@ -12,7 +12,7 @@ pub(super) enum MatcherState {
     Closeable,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum MatcherClass {
     Fixed,
     Dynamic,
@@ -53,25 +53,33 @@ impl<'a> MatcherStateManager<'a> {
         }
     }
 
-    fn chain(states: Vec<Self>) -> Self {
+    fn chain(states: Vec<Self>, mut before_switch: impl FnMut(&str, &Self) + 'a) -> Self {
         let mut states = states.into_iter();
-        let mut current = states.next();
+        let mut current = None;
+        for state in states.by_ref() {
+            before_switch("", &state);
+            if state.value != MatcherState::Closeable {
+                current = Some(state);
+                break;
+            }
+        }
         Self::new(
             match &current {
                 Some(s) => s.value.clone(),
                 None => MatcherState::Closeable,
             },
             move |buff, ch| match current {
-                Some(ref mut s) => {
-                    s.accept(buff, ch);
-                    match &s.value {
-                        MatcherState::Closeable => {
-                            current = states.next();
-                            match &current {
-                                Some(s) => s.value.clone(),
-                                None => MatcherState::Closeable,
+                Some(ref mut c) => {
+                    c.accept(buff, ch);
+                    match &c.value {
+                        MatcherState::Closeable => match states.next() {
+                            Some(s) => {
+                                before_switch(buff, &s);
+                                current = Some(s);
+                                current.as_ref().unwrap().value.clone()
                             }
-                        }
+                            None => c.value.clone(),
+                        },
                         s => s.clone(),
                     }
                 }
@@ -85,8 +93,10 @@ impl<'a> MatcherStateManager<'a> {
             conditions
                 .into_iter()
                 .map(|mut c| {
+                    let mut consumed = false;
                     MatcherStateManager::new(MatcherState::Open, move |buff, ch| {
-                        if c(buff, ch) {
+                        if !consumed && c(buff, ch) {
+                            consumed = true;
                             MatcherState::Closeable
                         } else {
                             MatcherState::Broken
@@ -94,6 +104,7 @@ impl<'a> MatcherStateManager<'a> {
                     })
                 })
                 .collect(),
+            |_, _| {},
         )
     }
 
@@ -104,10 +115,19 @@ impl<'a> MatcherStateManager<'a> {
         Self::conditions(source.chars().map(make_filter).collect())
     }
 
-    fn take_while(mut filter: impl FnMut(&str, char) -> bool + 'a) -> Self {
-        Self::new(MatcherState::Open, move |buff, ch| {
-            if filter(buff, ch) {
+    fn take_while(mut filter: impl FnMut(&str, char) -> bool + 'a, min: usize) -> Self {
+        let mut count = 0;
+        let check_count = move |count| {
+            if count < min {
+                MatcherState::Open
+            } else {
                 MatcherState::Closeable
+            }
+        };
+        Self::new(check_count(count), move |buff, ch| {
+            if filter(buff, ch) {
+                count += 1;
+                check_count(count)
             } else {
                 MatcherState::Broken
             }
@@ -209,6 +229,7 @@ impl<'a, T: 'a + Clone> DefaultMatcher<'a, T> {
     pub(super) fn filtered_collector<const N: usize>(
         terminators: [&str; N],
         filter: impl FnMut(&str, char) -> bool + 'a,
+        consume_terminator: bool,
         mut closer: impl FnMut(&str, &str, &mut LexerStateManager) -> Result<T, TokenizationError> + 'a,
     ) -> Box<dyn Matcher<T> + 'a> {
         let terminators = terminators.map(String::from);
@@ -218,32 +239,43 @@ impl<'a, T: 'a + Clone> DefaultMatcher<'a, T> {
             move |buffer, state| {
                 let terminator = terminators.iter().find(|t| buffer.ends_with(*t)).unwrap();
                 let value = buffer.strip_suffix(terminator).unwrap();
-                closer(value, terminator, state).map(|t| (t, value.len()))
+                closer(value, terminator, state).map(|t| {
+                    (
+                        t,
+                        if consume_terminator {
+                            buffer.len()
+                        } else {
+                            value.len()
+                        },
+                    )
+                })
             },
         )
     }
 
     pub(super) fn collector<const N: usize>(
         terminators: [&str; N],
+        consume_terminator: bool,
         closer: impl FnMut(&str, &str, &mut LexerStateManager) -> Result<T, TokenizationError> + 'a,
     ) -> Box<dyn Matcher<T> + 'a> {
-        Self::filtered_collector(terminators, |_, _| true, closer)
+        Self::filtered_collector(terminators, |_, _| true, consume_terminator, closer)
     }
 
     pub(super) fn take_while(
         filter: impl FnMut(&str, char) -> bool + 'a,
+        min: usize,
         closer: impl FnMut(&str, &mut LexerStateManager) -> Result<T, TokenizationError> + 'a,
     ) -> Box<dyn Matcher<T> + 'a> {
         Self::new(
             MatcherClass::Dynamic,
-            MatcherStateManager::take_while(filter),
+            MatcherStateManager::take_while(filter, min),
             Self::full_match_closer(closer),
         )
     }
 }
 
 impl<'a> DefaultMatcher<'a, String> {
-    pub(super) fn prefix(value: &str) -> Box<dyn Matcher<String> + 'a> {
+    pub(super) fn fixed_text(value: &str) -> Box<dyn Matcher<String> + 'a> {
         Self::simple_text(value, value.to_string())
     }
 }
@@ -251,7 +283,7 @@ impl<'a> DefaultMatcher<'a, String> {
 pub(super) struct ChainMatcher<'a, T, U: Clone, const N: usize> {
     class: MatcherClass,
     matchers: Rc<RefCell<[Box<dyn Matcher<U> + 'a>; N]>>,
-    buffer_ranges: Rc<RefCell<Vec<usize>>>,
+    buffer_indexes: Rc<RefCell<Vec<usize>>>,
     state: MatcherStateManager<'a>,
     closer:
         Box<dyn FnMut(&str, [U; N], &mut LexerStateManager) -> Result<T, TokenizationError> + 'a>,
@@ -265,41 +297,39 @@ impl<'a, T: 'a, U: 'a + Clone, const N: usize> ChainMatcher<'a, T, U, N> {
     ) -> Box<dyn Matcher<T> + 'a> {
         let len = matchers.len();
         let matchers = Rc::new(RefCell::new(matchers));
-        let buffer_ranges = Rc::new(RefCell::new(vec![]));
+        let buffer_indexes = Rc::new(RefCell::new(vec![]));
         Box::new(Self {
             class: MatcherClass::Dynamic,
-            matchers: Rc::clone(&matchers),
-            buffer_ranges: Rc::clone(&buffer_ranges),
+            matchers: matchers.clone(),
+            buffer_indexes: buffer_indexes.clone(),
             state: MatcherStateManager::chain(
                 (0..len)
                     .map(|i| {
                         let state = matchers.borrow()[i].state().clone();
-                        let matchers = Rc::clone(&matchers);
-                        let buffer_ranges = Rc::clone(&buffer_ranges);
+                        let matchers = matchers.clone();
                         MatcherStateManager::new(state, move |buffer, ch| -> MatcherState {
                             let mut m = matchers.borrow_mut();
-                            let mut b = buffer_ranges.borrow_mut();
                             m[i].accept(buffer, ch);
-                            let state = m[i].state();
-                            if *state == MatcherState::Closeable {
-                                let start = Self::buffer_start_static(&b);
-                                b.push(buffer.len() + start);
-                            }
-                            state.clone()
+                            m[i].state().clone()
                         })
                     })
                     .collect(),
+                move |buffer, _| {
+                    let buffer_indexes: Rc<RefCell<Vec<usize>>> = buffer_indexes.clone();
+                    let mut b = buffer_indexes.borrow_mut();
+                    b.push(buffer.len());
+                },
             ),
             closer: Box::new(closer),
         })
     }
 
     fn buffer_start_static(buffer_ranges: &RefMut<'_, Vec<usize>>) -> usize {
-        buffer_ranges.last().unwrap_or(&0).clone()
+        buffer_ranges.last().unwrap().clone()
     }
 
     fn buffer_start(&self) -> usize {
-        Self::buffer_start_static(&self.buffer_ranges.borrow_mut())
+        Self::buffer_start_static(&self.buffer_indexes.borrow_mut())
     }
 }
 
@@ -319,9 +349,11 @@ impl<'a, T: 'a, U: Clone + 'a, const N: usize> Matcher<T> for ChainMatcher<'a, T
 
     fn close(&mut self, buffer: &str, state: &mut LexerStateManager) -> MatchResult<T> {
         let mut matchers = self.matchers.borrow_mut();
-        let buffer_indexes: Vec<usize> = [0]
+        let buffer_indexes: Vec<usize> = self
+            .buffer_indexes
+            .borrow_mut()
             .iter()
-            .chain(self.buffer_ranges.borrow_mut().iter())
+            .chain([buffer.len()].iter())
             .map(usize::clone)
             .collect();
         let results = std::array::from_fn(|i| {
@@ -373,8 +405,11 @@ mod tests {
             matcher.accept(&self.buffer, ch);
         }
 
-        fn close<T>(&self, mut matcher: Box<dyn Matcher<T>>) {
-            let _ = matcher.close(&self.buffer, &mut LexerStateManager::new());
+        fn close<T>(&self, mut matcher: Box<dyn Matcher<T>>) -> usize {
+            matcher
+                .close(&self.buffer, &mut LexerStateManager::new())
+                .unwrap()
+                .1
         }
     }
 
@@ -552,7 +587,7 @@ mod tests {
 
     #[rstest]
     fn collector_closer(mut ctx: Context) {
-        let mut matcher = DefaultMatcher::collector(["01", "23"], |value, terminator, _| {
+        let mut matcher = DefaultMatcher::collector(["01", "23"], false, |value, terminator, _| {
             assert_eq!("abc", value);
             assert_eq!("23", terminator);
             Ok(())
@@ -562,15 +597,26 @@ mod tests {
         ctx.matcher_accept('c', &mut matcher);
         ctx.matcher_accept('2', &mut matcher);
         ctx.matcher_accept('3', &mut matcher);
-        ctx.close(matcher);
+        assert_eq!(3, ctx.close(matcher));
+    }
+
+    #[rstest]
+    fn collector_closer_consume_terminator(mut ctx: Context) {
+        let mut matcher = DefaultMatcher::collector(["01", "23"], true, |_, _, _| Ok(()));
+        ctx.matcher_accept('a', &mut matcher);
+        ctx.matcher_accept('b', &mut matcher);
+        ctx.matcher_accept('c', &mut matcher);
+        ctx.matcher_accept('2', &mut matcher);
+        ctx.matcher_accept('3', &mut matcher);
+        assert_eq!(5, ctx.close(matcher));
     }
 
     #[rstest]
     fn take_while(mut ctx: Context) {
-        let mut state = MatcherStateManager::take_while(|_, ch| ch.is_alphanumeric());
+        let mut state = MatcherStateManager::take_while(|_, ch| ch.is_alphanumeric(), 2);
         assert_eq!(MatcherState::Open, state.value);
         ctx.state_accept('d', &mut state); // alphanumeric
-        assert_eq!(MatcherState::Closeable, state.value);
+        assert_eq!(MatcherState::Open, state.value);
         ctx.state_accept('e', &mut state); // alphanumeric
         assert_eq!(MatcherState::Closeable, state.value);
         ctx.state_accept('2', &mut state); // alphanumeric
@@ -581,10 +627,15 @@ mod tests {
 
     #[rstest]
     fn chain(mut ctx: Context) {
-        let mut state = MatcherStateManager::chain(vec![
-            MatcherStateManager::text("abc"),
-            MatcherStateManager::filtered_collector(["\t".to_string()], |_, ch| ch.is_whitespace()),
-        ]);
+        let mut state = MatcherStateManager::chain(
+            vec![
+                MatcherStateManager::text("abc"),
+                MatcherStateManager::filtered_collector(["\t".to_string()], |_, ch| {
+                    ch.is_whitespace()
+                }),
+            ],
+            |_, _| {},
+        );
         assert_eq!(MatcherState::Open, state.value);
         ctx.state_accept('a', &mut state); // 'a'
         assert_eq!(MatcherState::Open, state.value);
@@ -601,9 +652,38 @@ mod tests {
     }
 
     #[rstest]
+    fn chain_before_switch(mut ctx: Context) {
+        let mut count = 0;
+        let mut state = MatcherStateManager::chain(
+            vec![
+                MatcherStateManager::text("abc"),
+                MatcherStateManager::filtered_collector(["\t".to_string()], |_, ch| {
+                    ch.is_whitespace()
+                }),
+            ],
+            |buff, _| {
+                count += 1;
+                match count {
+                    1 => assert_eq!("", buff),
+                    2 => assert_eq!("abc", buff),
+                    _ => panic!(),
+                }
+            },
+        );
+        ctx.state_accept('a', &mut state); // 'a'
+        ctx.state_accept('b', &mut state); // 'b'
+        ctx.state_accept('c', &mut state); // 'c', switch to next
+        ctx.state_accept(' ', &mut state); // whitespace
+        ctx.state_accept('\t', &mut state); // '\t', terminator
+    }
+
+    #[rstest]
     fn chain_closer(mut ctx: Context) {
         let mut matcher = ChainMatcher::new(
-            [DefaultMatcher::prefix("abc"), DefaultMatcher::prefix("def")],
+            [
+                DefaultMatcher::fixed_text("abc"),
+                DefaultMatcher::fixed_text("def"),
+            ],
             |value, [first, second], _| {
                 assert_eq!("abcdef", value);
                 assert_eq!("abc", first);
@@ -617,6 +697,40 @@ mod tests {
         ctx.matcher_accept('d', &mut matcher);
         ctx.matcher_accept('e', &mut matcher);
         ctx.matcher_accept('f', &mut matcher);
+        ctx.close(matcher);
+    }
+
+    #[rstest]
+    fn chain_closer_take_while(mut ctx: Context) {
+        let mut matcher = ChainMatcher::new(
+            [
+                DefaultMatcher::fixed_text("abc"),
+                DefaultMatcher::take_while(
+                    |_, ch| ch.is_alphabetic(),
+                    1,
+                    |val, _| Ok(val.to_string()),
+                ),
+            ],
+            |value, [first, second], _| {
+                assert_eq!("abcdef", value);
+                assert_eq!("abc", first);
+                assert_eq!("def", second);
+                Ok(())
+            },
+        );
+        assert_eq!(MatcherState::Open, *matcher.state());
+        ctx.matcher_accept('a', &mut matcher);
+        assert_eq!(MatcherState::Open, *matcher.state());
+        ctx.matcher_accept('b', &mut matcher);
+        assert_eq!(MatcherState::Open, *matcher.state());
+        ctx.matcher_accept('c', &mut matcher);
+        assert_eq!(MatcherState::Open, *matcher.state());
+        ctx.matcher_accept('d', &mut matcher);
+        assert_eq!(MatcherState::Closeable, *matcher.state());
+        ctx.matcher_accept('e', &mut matcher);
+        assert_eq!(MatcherState::Closeable, *matcher.state());
+        ctx.matcher_accept('f', &mut matcher);
+        assert_eq!(MatcherState::Closeable, *matcher.state());
         ctx.close(matcher);
     }
 }
