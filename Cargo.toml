@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["cli", "doot"]
+members = ["cli", "doot", "utils"]
 
 [workspace.package]
 description = "Doot programming language"
