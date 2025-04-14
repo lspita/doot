@@ -13,9 +13,17 @@ pub enum LexerState {
     Normal(bool),
     CompositeString,
     RawString(usize),
+    Comment(String),
 }
 
 impl LexerState {
+    pub(super) fn ignore_whitespace(&self) -> bool {
+        match self {
+            LexerState::Normal(_) => true,
+            _ => false,
+        }
+    }
+
     pub(super) fn matchers(&self) -> Vec<Box<dyn Matcher<Token>>> {
         fn int_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
             ChainMatcher::new(
@@ -145,6 +153,14 @@ impl LexerState {
                 int_literal("-"),
                 float_literal(""),
                 float_literal("-"),
+                DefaultMatcher::text("//", |_, state| {
+                    state.push(Self::Comment("\n".to_string()));
+                    Ok(Token::LineCommentOpen)
+                }),
+                DefaultMatcher::text("/*", |_, state| {
+                    state.push(Self::Comment("*/".to_string()));
+                    Ok(Token::BlockCommentOpen)
+                }),
             ],
             Self::CompositeString => vec![
                 DefaultMatcher::take_while(
@@ -230,6 +246,24 @@ impl LexerState {
                     },
                 ]
             }
+            Self::Comment(ref terminator) => vec![
+                DefaultMatcher::collector([terminator.clone().as_ref()], false, |value, _, _| {
+                    Ok(Token::CommentLiteral(value.to_string()))
+                }),
+                DefaultMatcher::text(terminator.clone().as_ref(), |_, state| {
+                    state.pop();
+                    Ok(Token::CommentClose)
+                }),
+                {
+                    // unclosed string literals
+                    let terminator = terminator.clone();
+                    DefaultMatcher::take_while(
+                        move |buff, _| !buff.ends_with(&terminator),
+                        0,
+                        |value, _| Ok(Token::CommentLiteral(value.to_string())),
+                    )
+                },
+            ],
         }
     }
 }

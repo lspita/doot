@@ -100,7 +100,9 @@ impl<'a> Iterator for Lexer<'a> {
         }
         self.buffer.clear();
         for ch in source.chain(['\0']) {
-            if !matching && (ch.is_whitespace() || ch == '\0') {
+            if !matching
+                && (ch == '\0' || (self.state.get().ignore_whitespace() && ch.is_whitespace()))
+            {
                 continue;
             }
             matching = true;
@@ -204,6 +206,8 @@ mod tests {
     #[case("null", Token::Null)]
     #[case("true", Token::BoolLiteral(true))]
     #[case("false", Token::BoolLiteral(false))]
+    #[case("//", Token::LineCommentOpen)]
+    #[case("/*", Token::BlockCommentOpen)]
     fn simple_tokens(#[case] source: &str, #[case] expected: Token) {
         assert_tokens(source, [expected]);
     }
@@ -234,6 +238,8 @@ mod tests {
     #[rstest]
     #[case("\"", [Token::StringOpen])]
     #[case("\"\"", [Token::StringOpen, Token::StringClose])]
+    #[case(r#"" ""#, [Token::StringOpen, Token::StringLiteral(" ".to_string()), Token::StringClose])]
+    #[case(r#"" foo""#, [Token::StringOpen, Token::StringLiteral(" foo".to_string()), Token::StringClose])]
     #[case(r#""foo"#, [Token::StringOpen, Token::StringLiteral("foo".to_string())])]
     #[case(r#""foo""#, [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
     #[case(
@@ -315,6 +321,7 @@ mod tests {
 
     #[rstest]
     #[case("`foo`", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
+    #[case("` foo`", [Token::StringOpen, Token::StringLiteral(" foo".to_string()), Token::StringClose])]
     #[case("`foo", [Token::StringOpen, Token::StringLiteral("foo".to_string())])]
     #[case("#`foo`#", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
     #[case("###`foo`###", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
@@ -323,6 +330,16 @@ mod tests {
     #[case("##`fo `# o`##", [Token::StringOpen, Token::StringLiteral("fo `# o".to_string()), Token::StringClose])]
     #[case(r"`fo\no`", [Token::StringOpen, Token::StringLiteral(r"fo\no".to_string()), Token::StringClose])]
     fn raw_string_literals<const N: usize>(#[case] source: &str, #[case] expected: [Token; N]) {
+        assert_tokens(source, expected);
+    }
+    #[rstest]
+    #[case("// foo", [Token::LineCommentOpen, Token::CommentLiteral(" foo".to_string())])]
+    #[case("// foo\n", [Token::LineCommentOpen, Token::CommentLiteral(" foo".to_string()), Token::CommentClose])]
+    #[case("// foo */", [Token::LineCommentOpen, Token::CommentLiteral(" foo */".to_string())])]
+    #[case("/* foo", [Token::BlockCommentOpen, Token::CommentLiteral(" foo".to_string())])]
+    #[case("/* foo */", [Token::BlockCommentOpen, Token::CommentLiteral(" foo ".to_string()), Token::CommentClose])]
+    #[case("/* foo\n", [Token::BlockCommentOpen, Token::CommentLiteral(" foo\n".to_string())])]
+    fn comments<const N: usize>(#[case] source: &str, #[case] expected: [Token; N]) {
         assert_tokens(source, expected);
     }
 
