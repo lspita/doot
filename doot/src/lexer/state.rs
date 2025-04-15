@@ -161,6 +161,7 @@ impl LexerState {
                     state.push(Self::Comment("*/".to_string()));
                     Ok(Token::BlockCommentOpen)
                 }),
+                DefaultMatcher::simple_text(";", Token::SemiColon),
             ],
             Self::CompositeString => vec![
                 DefaultMatcher::take_while(

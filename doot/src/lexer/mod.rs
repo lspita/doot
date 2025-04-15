@@ -208,6 +208,7 @@ mod tests {
     #[case("false", Token::BoolLiteral(false))]
     #[case("//", Token::LineCommentOpen)]
     #[case("/*", Token::BlockCommentOpen)]
+    #[case(";", Token::SemiColon)]
     fn simple_tokens(#[case] source: &str, #[case] expected: Token) {
         assert_tokens(source, [expected]);
     }
