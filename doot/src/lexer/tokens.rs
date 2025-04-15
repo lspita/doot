@@ -31,6 +31,7 @@ pub enum Token {
     LineCommentOpen,  // //
     BlockCommentOpen, // /*
     CommentClose,     // newline, */
+    SemiColon,        // ;
 
     // keywords
     Let,    // let
