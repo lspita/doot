@@ -49,8 +49,8 @@ pub enum Token {
     Null,                   // null
     BoolLiteral(bool),      // true, false
     Identifier(String),     // foo
-    IntLiteral(i64),        // 1234
-    FloatLiteral(f64),      // 1234.5678
+    IntLiteral(String),     // 1234
+    FloatLiteral(String),   // 1234.5678
     StringLiteral(String),  // "hello, world" (the content)
     CommentLiteral(String), // // hello (the content)
 }

@@ -1,6 +1,7 @@
 use std::fmt::{Debug, Display};
 
 pub mod lexer;
+pub mod parser;
 
 pub trait Source {
     fn name(&self) -> &str;

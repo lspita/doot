@@ -41,11 +41,7 @@ impl LexerState {
                         |value, _| Ok(value.to_string()),
                     ),
                 ],
-                |val, _, _| {
-                    parsing::parse_int(val)
-                        .map(Token::IntLiteral)
-                        .map_err(TokenizationError::NumberParse)
-                },
+                |val, _, _| Ok(Token::IntLiteral(val.to_string())),
             )
         }
 
@@ -65,11 +61,7 @@ impl LexerState {
                         |value, _| Ok(value.to_string()),
                     ),
                 ],
-                |val, _, _| {
-                    parsing::parse_float(val)
-                        .map(Token::FloatLiteral)
-                        .map_err(TokenizationError::NumberParse)
-                },
+                |val, _, _| Ok(Token::FloatLiteral(val.to_string())),
             )
         }
         match *self {

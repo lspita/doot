@@ -1,7 +1,7 @@
 use std::{char, error::Error, fmt::Display};
 
 use matchers::{Matcher, MatcherState};
-use parsing::{EscapeParseError, NumberParseError, UnicodeParseError};
+use parsing::{EscapeParseError, UnicodeParseError};
 use state::LexerStateManager;
 use tokens::Token;
 
@@ -16,7 +16,6 @@ pub enum TokenizationError {
     NoEscape,
     EscapeParse(EscapeParseError),
     UnicodeParse(UnicodeParseError),
-    NumberParse(NumberParseError),
 }
 
 impl Error for TokenizationError {}
@@ -27,19 +26,12 @@ impl Display for TokenizationError {
             TokenizationError::NoEscape => {
                 format!("missing escaped character")
             }
-            TokenizationError::EscapeParse(EscapeParseError::InvalidEscape(escape)) => {
-                format!("invalid escape {}", escape)
+            TokenizationError::EscapeParse(err) => {
+                format!("{}", err)
             }
-            TokenizationError::EscapeParse(EscapeParseError::NoValue(escape)) => {
-                format!("missing value for escape {}", escape)
+            TokenizationError::UnicodeParse(err) => {
+                format!("{}", err)
             }
-            TokenizationError::UnicodeParse(UnicodeParseError::InvalidHex(hex)) => {
-                format!("invalid hex value {}", hex)
-            }
-            TokenizationError::UnicodeParse(UnicodeParseError::InvalidValue(unicode)) => {
-                format!("invalid unicode value {}", unicode)
-            }
-            TokenizationError::NumberParse(err) => format!("number parse error: {}", err),
         }
         .fmt(f)
     }
@@ -152,7 +144,7 @@ impl<'a> Iterator for Lexer<'a> {
 mod tests {
     use rstest::rstest;
 
-    use crate::lexer::parsing::{EscapeParseError, NumberParseError, UnicodeParseError};
+    use crate::lexer::parsing::{EscapeParseError, UnicodeParseError};
 
     use super::{Lexer, TokenizationError, tokens::Token};
 
@@ -216,24 +208,14 @@ mod tests {
     #[rstest]
     #[case("foo", Token::Identifier("foo".to_string()))]
     #[case("_123", Token::Identifier("_123".to_string()))]
-    #[case("123", Token::IntLiteral(123))]
-    #[case("-123", Token::IntLiteral(-123))]
-    #[case("123.456", Token::FloatLiteral(123.456))]
-    #[case("-123.456", Token::FloatLiteral(-123.456))]
+    #[case("123", Token::IntLiteral("123".to_string()))]
+    #[case("-123", Token::IntLiteral("-123".to_string()))]
+    #[case("123.456", Token::FloatLiteral("123.456".to_string()))]
+    #[case("-123.456", Token::FloatLiteral("-123.456".to_string()))]
+    #[case("123.abc", Token::FloatLiteral("123.abc".to_string()))]
+    #[case("123.456.789", Token::FloatLiteral("123.456.789".to_string()))]
     fn normal_literals(#[case] source: &str, #[case] expected: Token) {
         assert_tokens(source, [expected]);
-    }
-
-    #[rstest]
-    #[case("123.abc")]
-    #[case("123.456.789")]
-    fn floats_infinite_points(#[case] source: &str) {
-        assert_results(
-            source,
-            [Err(TokenizationError::NumberParse(
-                NumberParseError::InvalidFloat,
-            ))],
-        );
     }
 
     #[rstest]
@@ -352,7 +334,6 @@ mod tests {
     // all possible parsing errors are tested in the parsing.rs file, only proper error propagation is tested here
     #[case(r#""\a""#, [Ok(Token::StringOpen), Err(TokenizationError::EscapeParse(EscapeParseError::InvalidEscape(r"\a".to_string())))])]
     #[case(r#""\u{g}""#, [Ok(Token::StringOpen), Err(TokenizationError::UnicodeParse(UnicodeParseError::InvalidHex("g".to_string())))])]
-    #[case("0a123", [Err(TokenizationError::NumberParse(NumberParseError::InvalidRadix("a".to_string())))])]
     fn errors<const N: usize>(
         #[case] source: &str,
         #[case] expected: [Result<Token, TokenizationError>; N],
@@ -400,14 +381,14 @@ mod tests {
             Token::Let,
             Token::Identifier("a".to_string()),
             Token::Equal,
-            Token::IntLiteral(5),
+            Token::IntLiteral("5".to_string()),
         ]
     )]
     #[case(
         "(5).attribute", 
         [
             Token::LeftParen,
-            Token::IntLiteral(5),
+            Token::IntLiteral("5".to_string()),
             Token::RightParen,
             Token::Dot,
             Token::Identifier("attribute".to_string()),
@@ -417,7 +398,7 @@ mod tests {
         "(5.6).attribute", 
         [
             Token::LeftParen,
-            Token::FloatLiteral(5.6),
+            Token::FloatLiteral("5.6".to_string()),
             Token::RightParen,
             Token::Dot,
             Token::Identifier("attribute".to_string()),
