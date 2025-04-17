@@ -1,5 +1,6 @@
 use std::fmt::{Debug, Display};
 
+pub mod ast;
 pub mod lexer;
 pub mod parser;
 

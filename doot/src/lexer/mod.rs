@@ -16,6 +16,8 @@ pub enum TokenizationError {
     NoEscape,
     EscapeParse(EscapeParseError),
     UnicodeParse(UnicodeParseError),
+    UnclosedString,
+    UnclosedComment,
 }
 
 impl Error for TokenizationError {}
@@ -32,6 +34,8 @@ impl Display for TokenizationError {
             TokenizationError::UnicodeParse(err) => {
                 format!("{}", err)
             }
+            TokenizationError::UnclosedString => "unclosed string".to_string(),
+            TokenizationError::UnclosedComment => "unclosed comment".to_string(),
         }
         .fmt(f)
     }
@@ -56,6 +60,10 @@ impl<'a> Lexer<'a> {
 
     fn clean_buffer(&self) -> String {
         self.buffer.trim_end_matches('\0').to_string()
+    }
+
+    fn invalid_whitespace(ch: char) -> bool {
+        ch.is_whitespace() && ch != '\n'
     }
 }
 
@@ -93,7 +101,8 @@ impl<'a> Iterator for Lexer<'a> {
         self.buffer.clear();
         for ch in source.chain(['\0']) {
             if !matching
-                && (ch == '\0' || (self.state.get().ignore_whitespace() && ch.is_whitespace()))
+                && (ch == '\0'
+                    || (self.state.get().ignore_whitespace() && Self::invalid_whitespace(ch)))
             {
                 continue;
             }
@@ -162,9 +171,10 @@ mod tests {
 
     #[rstest]
     #[case("+", Token::Plus)]
-    #[case("-", Token::Minus)]
+    #[case("-", Token::Dash)]
     #[case("*", Token::Asterisk)]
     #[case("/", Token::Slash)]
+    #[case("%", Token::Percent)]
     #[case("(", Token::LeftParen)]
     #[case(")", Token::RightParen)]
     #[case("[", Token::LeftSquare)]
@@ -181,9 +191,7 @@ mod tests {
     #[case(">=", Token::GreaterEqual)]
     #[case("<", Token::Less)]
     #[case("<=", Token::LessEqual)]
-    #[case("&", Token::Ampersand)]
     #[case("&&", Token::DoubleAmpersand)]
-    #[case("|", Token::Pipe)]
     #[case("||", Token::DoublePipe)]
     #[case("let", Token::Let)]
     #[case("var", Token::Var)]
@@ -198,9 +206,8 @@ mod tests {
     #[case("null", Token::Null)]
     #[case("true", Token::BoolLiteral(true))]
     #[case("false", Token::BoolLiteral(false))]
-    #[case("//", Token::LineCommentOpen)]
-    #[case("/*", Token::BlockCommentOpen)]
     #[case(";", Token::SemiColon)]
+    #[case("?", Token::Questionmark)]
     fn simple_tokens(#[case] source: &str, #[case] expected: Token) {
         assert_tokens(source, [expected]);
     }
@@ -219,83 +226,81 @@ mod tests {
     }
 
     #[rstest]
-    #[case("\"", [Token::StringOpen])]
-    #[case("\"\"", [Token::StringOpen, Token::StringClose])]
-    #[case(r#"" ""#, [Token::StringOpen, Token::StringLiteral(" ".to_string()), Token::StringClose])]
-    #[case(r#"" foo""#, [Token::StringOpen, Token::StringLiteral(" foo".to_string()), Token::StringClose])]
-    #[case(r#""foo"#, [Token::StringOpen, Token::StringLiteral("foo".to_string())])]
-    #[case(r#""foo""#, [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
+    #[case("\"\"", [Token::StringQuotes, Token::StringQuotes])]
+    #[case(r#"" ""#, [Token::StringQuotes, Token::StringLiteral(" ".to_string()), Token::StringQuotes])]
+    #[case(r#"" foo""#, [Token::StringQuotes, Token::StringLiteral(" foo".to_string()), Token::StringQuotes])]
+    #[case(r#""foo""#, [Token::StringQuotes, Token::StringLiteral("foo".to_string()), Token::StringQuotes])]
     #[case(
         r#""fo\to""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::StringLiteral("\t".to_string()), 
             Token::StringLiteral("o".to_string()), 
-            Token::StringClose,
+            Token::StringQuotes,
         ]
     )]
-    #[case(r#""foo $"#, [Token::StringOpen, Token::StringLiteral("foo $".to_string())])]
+    #[case(r#""foo $"#, [Token::StringQuotes, Token::StringLiteral("foo $".to_string())])]
     #[case(
         r#""fo${if}o""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::DollarLeftBrace,
             Token::If,
             Token::RightBrace,
             Token::StringLiteral("o".to_string()), 
-            Token::StringClose,
+            Token::StringQuotes,
         ]
     )]
     #[case(
         r#""fo${if"bar"}o""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::DollarLeftBrace,
             Token::If,
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("bar".to_string()), 
-            Token::StringClose,
+            Token::StringQuotes,
             Token::RightBrace,
             Token::StringLiteral("o".to_string()), 
-            Token::StringClose,
+            Token::StringQuotes,
         ]
     )]
     #[case(
         r#""fo${{}}o""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::DollarLeftBrace,
             Token::LeftBrace,
             Token::RightBrace,
             Token::RightBrace,
             Token::StringLiteral("o".to_string()), 
-            Token::StringClose,
+            Token::StringQuotes,
         ]
     )]
     #[case(
         r#""fo${{}o""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::DollarLeftBrace,
             Token::LeftBrace,
             Token::RightBrace,
             Token::Identifier("o".to_string()), // uneven braces
-            Token::StringOpen,
+            Token::StringQuotes,
         ]
     )]
     #[case(
         r#""fo\${}o""#, 
         [
-            Token::StringOpen,
+            Token::StringQuotes,
             Token::StringLiteral("fo".to_string()), 
             Token::StringLiteral("$".to_string()),
             Token::StringLiteral("{}o".to_string()),
-            Token::StringClose,
+            Token::StringQuotes,
         ]
     )]
     fn string_literals<const N: usize>(#[case] source: &str, #[case] expected: [Token; N]) {
@@ -303,25 +308,23 @@ mod tests {
     }
 
     #[rstest]
-    #[case("`foo`", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
-    #[case("` foo`", [Token::StringOpen, Token::StringLiteral(" foo".to_string()), Token::StringClose])]
-    #[case("`foo", [Token::StringOpen, Token::StringLiteral("foo".to_string())])]
-    #[case("#`foo`#", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
-    #[case("###`foo`###", [Token::StringOpen, Token::StringLiteral("foo".to_string()), Token::StringClose])]
-    #[case("#`foo`", [Token::StringOpen, Token::StringLiteral("foo`".to_string())])]
-    #[case("#`fo ` o`#", [Token::StringOpen, Token::StringLiteral("fo ` o".to_string()), Token::StringClose])]
-    #[case("##`fo `# o`##", [Token::StringOpen, Token::StringLiteral("fo `# o".to_string()), Token::StringClose])]
-    #[case(r"`fo\no`", [Token::StringOpen, Token::StringLiteral(r"fo\no".to_string()), Token::StringClose])]
+    #[case("`foo`", [Token::StringQuotes, Token::StringLiteral("foo".to_string()), Token::StringQuotes])]
+    #[case("` foo`", [Token::StringQuotes, Token::StringLiteral(" foo".to_string()), Token::StringQuotes])]
+    #[case("#`foo`#", [Token::StringQuotes, Token::StringLiteral("foo".to_string()), Token::StringQuotes])]
+    #[case("###`foo`###", [Token::StringQuotes, Token::StringLiteral("foo".to_string()), Token::StringQuotes])]
+    #[case("#`fo ` o`#", [Token::StringQuotes, Token::StringLiteral("fo ` o".to_string()), Token::StringQuotes])]
+    #[case("##`fo `# o`##", [Token::StringQuotes, Token::StringLiteral("fo `# o".to_string()), Token::StringQuotes])]
+    #[case(r"`fo\no`", [Token::StringQuotes, Token::StringLiteral(r"fo\no".to_string()), Token::StringQuotes])]
     fn raw_string_literals<const N: usize>(#[case] source: &str, #[case] expected: [Token; N]) {
         assert_tokens(source, expected);
     }
     #[rstest]
-    #[case("// foo", [Token::LineCommentOpen, Token::CommentLiteral(" foo".to_string())])]
-    #[case("// foo\n", [Token::LineCommentOpen, Token::CommentLiteral(" foo".to_string()), Token::CommentClose])]
-    #[case("// foo */", [Token::LineCommentOpen, Token::CommentLiteral(" foo */".to_string())])]
-    #[case("/* foo", [Token::BlockCommentOpen, Token::CommentLiteral(" foo".to_string())])]
-    #[case("/* foo */", [Token::BlockCommentOpen, Token::CommentLiteral(" foo ".to_string()), Token::CommentClose])]
-    #[case("/* foo\n", [Token::BlockCommentOpen, Token::CommentLiteral(" foo\n".to_string())])]
+    #[case("// foo", [Token::DoubleSlash, Token::StringLiteral(" foo".to_string())])]
+    #[case("// foo\n", [Token::DoubleSlash, Token::StringLiteral(" foo".to_string()), Token::AsteriskSlash])]
+    #[case("// foo */", [Token::DoubleSlash, Token::StringLiteral(" foo */".to_string())])]
+    #[case("/* foo", [Token::SlashAsterisk, Token::StringLiteral(" foo".to_string())])]
+    #[case("/* foo */", [Token::SlashAsterisk, Token::StringLiteral(" foo ".to_string()), Token::AsteriskSlash])]
+    #[case("/* foo\n", [Token::SlashAsterisk, Token::StringLiteral(" foo\n".to_string())])]
     fn comments<const N: usize>(#[case] source: &str, #[case] expected: [Token; N]) {
         assert_tokens(source, expected);
     }
@@ -330,10 +333,14 @@ mod tests {
     #[case("@", [Err(TokenizationError::InvalidToken("@".to_string()))])]
     #[case("@a", [Err(TokenizationError::InvalidToken("@".to_string()))])] // everything ignored after error
     #[case("${", [Err(TokenizationError::InvalidToken("$".to_string()))])] // invalid outside string literal
-    #[case(r#""\ ""#, [Ok(Token::StringOpen), Err(TokenizationError::NoEscape)])]
+    #[case(r#""\ ""#, [Ok(Token::StringQuotes), Err(TokenizationError::NoEscape)])]
     // all possible parsing errors are tested in the parsing.rs file, only proper error propagation is tested here
-    #[case(r#""\a""#, [Ok(Token::StringOpen), Err(TokenizationError::EscapeParse(EscapeParseError::InvalidEscape(r"\a".to_string())))])]
-    #[case(r#""\u{g}""#, [Ok(Token::StringOpen), Err(TokenizationError::UnicodeParse(UnicodeParseError::InvalidHex("g".to_string())))])]
+    #[case(r#""\a""#, [Ok(Token::StringQuotes), Err(TokenizationError::EscapeParse(EscapeParseError::InvalidEscape(r"\a".to_string())))])]
+    #[case(r#""\u{g}""#, [Ok(Token::StringQuotes), Err(TokenizationError::UnicodeParse(UnicodeParseError::InvalidHex("g".to_string())))])]
+    #[case("\"", [Err(TokenizationError::UnclosedString)])]
+    #[case(r#""foo"#, [Ok(Token::StringQuotes), Err(TokenizationError::UnclosedString)])]
+    #[case("`foo", [Ok(Token::StringQuotes), Err(TokenizationError::UnclosedString)])]
+    #[case("#`foo`", [Ok(Token::StringQuotes), Err(TokenizationError::UnclosedString)])]
     fn errors<const N: usize>(
         #[case] source: &str,
         #[case] expected: [Result<Token, TokenizationError>; N],
@@ -344,7 +351,6 @@ mod tests {
     #[rstest]
     #[case("", [])]
     #[case("\t", [])] // character tabulation (u+0009)
-    #[case("\n", [])] // line feed (u+000a)
     #[case("\u{000B}", [])] // line tabulation / vertical tab (u+000b)
     #[case("\u{000C}", [])] // form feed (u+000c)
     #[case("\r", [])] // carriage return (u+000d)

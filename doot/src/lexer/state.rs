@@ -13,7 +13,6 @@ pub enum LexerState {
     Normal(bool),
     CompositeString,
     RawString(usize),
-    Comment(String),
 }
 
 impl LexerState {
@@ -28,8 +27,8 @@ impl LexerState {
         fn int_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
             ChainMatcher::new(
                 [
-                    DefaultMatcher::fixed_text(prefix),
-                    DefaultMatcher::take_while(
+                    DefaultMatcher::text_string(prefix),
+                    DefaultMatcher::take_while_string(
                         |buff, ch| {
                             if buff.len() == 1 {
                                 ch.is_ascii_digit()
@@ -38,7 +37,6 @@ impl LexerState {
                             }
                         },
                         1,
-                        |value, _| Ok(value.to_string()),
                     ),
                 ],
                 |val, _, _| Ok(Token::IntLiteral(val.to_string())),
@@ -48,8 +46,8 @@ impl LexerState {
         fn float_literal(prefix: &str) -> Box<dyn Matcher<Token>> {
             ChainMatcher::new(
                 [
-                    DefaultMatcher::fixed_text(prefix),
-                    DefaultMatcher::take_while(
+                    DefaultMatcher::text_string(prefix),
+                    DefaultMatcher::take_while_string(
                         |buff, ch| {
                             if buff.len() == 1 {
                                 ch.is_ascii_digit()
@@ -58,115 +56,132 @@ impl LexerState {
                             }
                         },
                         1,
-                        |value, _| Ok(value.to_string()),
                     ),
                 ],
                 |val, _, _| Ok(Token::FloatLiteral(val.to_string())),
             )
         }
         match *self {
-            Self::Normal(from_string) => vec![
-                // symbols
-                DefaultMatcher::simple_text("+", Token::Plus),
-                DefaultMatcher::simple_text("-", Token::Minus),
-                DefaultMatcher::simple_text("*", Token::Asterisk),
-                DefaultMatcher::simple_text("/", Token::Slash),
-                DefaultMatcher::simple_text("(", Token::LeftParen),
-                DefaultMatcher::simple_text(")", Token::RightParen),
-                DefaultMatcher::simple_text("[", Token::LeftSquare),
-                DefaultMatcher::simple_text("]", Token::RightSquare),
-                DefaultMatcher::text("{", move |_, state| {
-                    if from_string {
-                        state.push(Self::Normal(true));
-                    }
-                    Ok(Token::LeftBrace)
-                }),
-                DefaultMatcher::text("}", move |_, state| {
-                    if from_string {
-                        state.pop();
-                    }
-                    Ok(Token::RightBrace)
-                }),
-                DefaultMatcher::simple_text(",", Token::Comma),
-                DefaultMatcher::simple_text(".", Token::Dot),
-                DefaultMatcher::simple_text("=", Token::Equal),
-                DefaultMatcher::simple_text("==", Token::DoubleEqual),
-                DefaultMatcher::simple_text("!", Token::Bang),
-                DefaultMatcher::simple_text("!=", Token::BangEqual),
-                DefaultMatcher::simple_text(">", Token::Greater),
-                DefaultMatcher::simple_text(">=", Token::GreaterEqual),
-                DefaultMatcher::simple_text("<", Token::Less),
-                DefaultMatcher::simple_text("<=", Token::LessEqual),
-                DefaultMatcher::simple_text("&", Token::Ampersand),
-                DefaultMatcher::simple_text("&&", Token::DoubleAmpersand),
-                DefaultMatcher::simple_text("|", Token::Pipe),
-                DefaultMatcher::simple_text("||", Token::DoublePipe),
-                DefaultMatcher::text("\"", |_, state| {
-                    state.push(Self::CompositeString);
-                    Ok(Token::StringOpen)
-                }),
-                DefaultMatcher::filtered_collector(
-                    ["`"],
-                    |_, ch| ch == '#' || ch == '`',
-                    true,
-                    |pounds, _, state| {
-                        state.push(Self::RawString(pounds.len()));
-                        Ok(Token::StringOpen)
-                    },
-                ),
-                // keywords
-                DefaultMatcher::simple_text("let", Token::Let),
-                DefaultMatcher::simple_text("var", Token::Var),
-                DefaultMatcher::simple_text("const", Token::Const),
-                DefaultMatcher::simple_text("if", Token::If),
-                DefaultMatcher::simple_text("else", Token::Else),
-                DefaultMatcher::simple_text("for", Token::For),
-                DefaultMatcher::simple_text("while", Token::While),
-                DefaultMatcher::simple_text("class", Token::Class),
-                DefaultMatcher::simple_text("fn", Token::Fn),
-                DefaultMatcher::simple_text("return", Token::Return),
-                // literals
-                DefaultMatcher::simple_text("null", Token::Null),
-                DefaultMatcher::simple_text("true", Token::BoolLiteral(true)),
-                DefaultMatcher::simple_text("false", Token::BoolLiteral(false)),
-                DefaultMatcher::take_while(
-                    |buff, ch| {
-                        ch == '_'
-                            || if buff.len() == 1 {
-                                ch.is_alphabetic()
-                            } else {
-                                ch.is_alphanumeric()
-                            }
-                    },
-                    1,
-                    |value, _| Ok(Token::Identifier(value.to_string())),
-                ),
-                int_literal(""),
-                int_literal("-"),
-                float_literal(""),
-                float_literal("-"),
-                DefaultMatcher::text("//", |_, state| {
-                    state.push(Self::Comment("\n".to_string()));
-                    Ok(Token::LineCommentOpen)
-                }),
-                DefaultMatcher::text("/*", |_, state| {
-                    state.push(Self::Comment("*/".to_string()));
-                    Ok(Token::BlockCommentOpen)
-                }),
-                DefaultMatcher::simple_text(";", Token::SemiColon),
-            ],
+            Self::Normal(from_string) => {
+                vec![
+                    // symbols
+                    DefaultMatcher::simple_text("+", Token::Plus),
+                    DefaultMatcher::simple_text("-", Token::Dash),
+                    DefaultMatcher::simple_text("*", Token::Asterisk),
+                    DefaultMatcher::simple_text("/", Token::Slash),
+                    DefaultMatcher::simple_text("%", Token::Percent),
+                    DefaultMatcher::simple_text("(", Token::LeftParen),
+                    DefaultMatcher::simple_text(")", Token::RightParen),
+                    DefaultMatcher::simple_text("[", Token::LeftSquare),
+                    DefaultMatcher::simple_text("]", Token::RightSquare),
+                    DefaultMatcher::text("{", move |_, state| {
+                        if from_string {
+                            state.push(Self::Normal(true));
+                        }
+                        Ok(Token::LeftBrace)
+                    }),
+                    DefaultMatcher::text("}", move |_, state| {
+                        if from_string {
+                            state.pop();
+                        }
+                        Ok(Token::RightBrace)
+                    }),
+                    DefaultMatcher::simple_text(",", Token::Comma),
+                    DefaultMatcher::simple_text(".", Token::Dot),
+                    DefaultMatcher::simple_text("=", Token::Equal),
+                    DefaultMatcher::simple_text("==", Token::DoubleEqual),
+                    DefaultMatcher::simple_text("!", Token::Bang),
+                    DefaultMatcher::simple_text("!=", Token::BangEqual),
+                    DefaultMatcher::simple_text(">", Token::Greater),
+                    DefaultMatcher::simple_text(">=", Token::GreaterEqual),
+                    DefaultMatcher::simple_text("<", Token::Less),
+                    DefaultMatcher::simple_text("<=", Token::LessEqual),
+                    DefaultMatcher::simple_text("&&", Token::DoubleAmpersand),
+                    DefaultMatcher::simple_text("||", Token::DoublePipe),
+                    DefaultMatcher::text("\"", |_, state| {
+                        state.push(Self::CompositeString);
+                        Ok(Token::StringQuotes)
+                    }),
+                    DefaultMatcher::filtered_collector(
+                        ["`"],
+                        |_, ch| ch == '#' || ch == '`',
+                        true,
+                        |pounds, _, state| {
+                            state.push(Self::RawString(pounds.len()));
+                            Ok(Token::StringQuotes)
+                        },
+                    ),
+                    // keywords
+                    DefaultMatcher::simple_text("let", Token::Let),
+                    DefaultMatcher::simple_text("var", Token::Var),
+                    DefaultMatcher::simple_text("const", Token::Const),
+                    DefaultMatcher::simple_text("if", Token::If),
+                    DefaultMatcher::simple_text("else", Token::Else),
+                    DefaultMatcher::simple_text("for", Token::For),
+                    DefaultMatcher::simple_text("while", Token::While),
+                    DefaultMatcher::simple_text("class", Token::Class),
+                    DefaultMatcher::simple_text("fn", Token::Fn),
+                    DefaultMatcher::simple_text("return", Token::Return),
+                    // literals
+                    DefaultMatcher::simple_text("null", Token::Null),
+                    DefaultMatcher::simple_text("true", Token::BoolLiteral(true)),
+                    DefaultMatcher::simple_text("false", Token::BoolLiteral(false)),
+                    DefaultMatcher::take_while(
+                        |buff, ch| {
+                            ch == '_'
+                                || if buff.len() == 1 {
+                                    ch.is_alphabetic()
+                                } else {
+                                    ch.is_alphanumeric()
+                                }
+                        },
+                        1,
+                        |value, _| Ok(Token::Identifier(value.to_string())),
+                    ),
+                    int_literal(""),
+                    int_literal("-"),
+                    float_literal(""),
+                    float_literal("-"),
+                    ChainMatcher::new(
+                        [
+                            DefaultMatcher::text_string("//"),
+                            DefaultMatcher::take_while_string(|_, ch| ch != '\n', 0),
+                        ],
+                        |_, [_, value], _| Ok(Token::CommentLiteral(value)),
+                    ),
+                    ChainMatcher::new(
+                        [
+                            DefaultMatcher::text_string("//"),
+                            DefaultMatcher::collector(["*/"], true, |value, _, _| {
+                                Ok(value.to_string())
+                            }),
+                        ],
+                        |_, [_, value], _| Ok(Token::CommentLiteral(value)),
+                    ),
+                    ChainMatcher::new(
+                        [
+                            DefaultMatcher::text_string("//"),
+                            DefaultMatcher::take_while_string(|buff, _| !buff.ends_with("*/"), 0),
+                        ],
+                        |_, _, _| Err(TokenizationError::UnclosedComment),
+                    ),
+                    DefaultMatcher::simple_text("\n", Token::Newline),
+                    DefaultMatcher::simple_text(";", Token::SemiColon),
+                    DefaultMatcher::simple_text("?", Token::Questionmark),
+                ]
+            }
             Self::CompositeString => vec![
-                DefaultMatcher::take_while(
-                    |buff, _| !["\"", "${", "\\"].iter().any(|t| buff.ends_with(t)), // unclosed string literals
-                    0,
-                    |value, _| Ok(Token::StringLiteral(value.to_string())),
-                ),
                 DefaultMatcher::collector(["\"", "${", "\\"], false, |value, _, _| {
                     Ok(Token::StringLiteral(value.to_string()))
                 }),
+                DefaultMatcher::take_while(
+                    |buff, _| !["\"", "${", "\\"].iter().any(|t| buff.ends_with(t)),
+                    0,
+                    |_, _| Err(TokenizationError::UnclosedString),
+                ),
                 DefaultMatcher::text("\"", |_, state| {
                     state.pop();
-                    Ok(Token::StringClose)
+                    Ok(Token::StringQuotes)
                 }),
                 DefaultMatcher::text("${", |_, state| {
                     state.push(Self::Normal(true));
@@ -174,7 +189,7 @@ impl LexerState {
                 }),
                 ChainMatcher::new(
                     [
-                        DefaultMatcher::fixed_text("\\"),
+                        DefaultMatcher::text_string("\\"),
                         DefaultMatcher::conditions(
                             vec![Box::new(|_: &str, ch: char| !ch.is_whitespace())],
                             |val, _| Ok(val.to_string()),
@@ -188,7 +203,7 @@ impl LexerState {
                 ),
                 ChainMatcher::new(
                     [
-                        DefaultMatcher::fixed_text("\\"),
+                        DefaultMatcher::text_string("\\"),
                         DefaultMatcher::conditions(
                             vec![Box::new(|_: &str, ch: char| ch.is_whitespace())],
                             |val, _| Ok(val.to_string()),
@@ -198,7 +213,7 @@ impl LexerState {
                 ),
                 ChainMatcher::new(
                     [
-                        DefaultMatcher::fixed_text("\\u{"),
+                        DefaultMatcher::text_string("\\u{"),
                         DefaultMatcher::filtered_collector(
                             ["}"],
                             |_, ch| !ch.is_whitespace(),
@@ -219,17 +234,7 @@ impl LexerState {
                     .chain(std::iter::repeat('#').take(pounds))
                     .collect::<String>();
                 vec![
-                    DefaultMatcher::collector(
-                        [pound_terminator.clone().as_ref()],
-                        false,
-                        |value, _, _| Ok(Token::StringLiteral(value.to_string())),
-                    ),
-                    DefaultMatcher::text(pound_terminator.clone().as_ref(), |_, state| {
-                        state.pop();
-                        Ok(Token::StringClose)
-                    }),
                     {
-                        // unclosed string literals
                         let terminator = pound_terminator.clone();
                         DefaultMatcher::take_while(
                             move |buff, _| !buff.ends_with(&terminator),
@@ -237,26 +242,12 @@ impl LexerState {
                             |value, _| Ok(Token::StringLiteral(value.to_string())),
                         )
                     },
+                    DefaultMatcher::text(pound_terminator.clone().as_ref(), |_, state| {
+                        state.pop();
+                        Ok(Token::StringQuotes)
+                    }),
                 ]
             }
-            Self::Comment(ref terminator) => vec![
-                DefaultMatcher::collector([terminator.clone().as_ref()], false, |value, _, _| {
-                    Ok(Token::CommentLiteral(value.to_string()))
-                }),
-                DefaultMatcher::text(terminator.clone().as_ref(), |_, state| {
-                    state.pop();
-                    Ok(Token::CommentClose)
-                }),
-                {
-                    // unclosed string literals
-                    let terminator = terminator.clone();
-                    DefaultMatcher::take_while(
-                        move |buff, _| !buff.ends_with(&terminator),
-                        0,
-                        |value, _| Ok(Token::CommentLiteral(value.to_string())),
-                    )
-                },
-            ],
         }
     }
 }

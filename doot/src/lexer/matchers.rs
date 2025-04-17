@@ -275,8 +275,15 @@ impl<'a, T: 'a + Clone> DefaultMatcher<'a, T> {
 }
 
 impl<'a> DefaultMatcher<'a, String> {
-    pub(super) fn fixed_text(value: &str) -> Box<dyn Matcher<String> + 'a> {
+    pub(super) fn text_string(value: &str) -> Box<dyn Matcher<String> + 'a> {
         Self::simple_text(value, value.to_string())
+    }
+
+    pub(super) fn take_while_string(
+        filter: impl FnMut(&str, char) -> bool + 'a,
+        min: usize,
+    ) -> Box<dyn Matcher<String> + 'a> {
+        Self::take_while(filter, min, |value, _| Ok(value.to_string()))
     }
 }
 
@@ -681,8 +688,8 @@ mod tests {
     fn chain_closer(mut ctx: Context) {
         let mut matcher = ChainMatcher::new(
             [
-                DefaultMatcher::fixed_text("abc"),
-                DefaultMatcher::fixed_text("def"),
+                DefaultMatcher::text_string("abc"),
+                DefaultMatcher::text_string("def"),
             ],
             |value, [first, second], _| {
                 assert_eq!("abcdef", value);
@@ -704,7 +711,7 @@ mod tests {
     fn chain_closer_take_while(mut ctx: Context) {
         let mut matcher = ChainMatcher::new(
             [
-                DefaultMatcher::fixed_text("abc"),
+                DefaultMatcher::text_string("abc"),
                 DefaultMatcher::take_while(
                     |_, ch| ch.is_alphabetic(),
                     1,

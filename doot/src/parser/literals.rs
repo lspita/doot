@@ -19,10 +19,10 @@ impl Display for NumberParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             NumberParseError::InvalidRadix(radix) => format!("invalid number radix {}", radix),
-            NumberParseError::InvalidInt => "invalid digits found".to_string(),
+            NumberParseError::InvalidInt => "invalid int literal".to_string(),
             NumberParseError::PositiveOverflow => "positive overflow".to_string(),
             NumberParseError::NegativeOverflow => "negative overflow".to_string(),
-            NumberParseError::InvalidFloat => "invalid float".to_string(),
+            NumberParseError::InvalidFloat => "invalid float literal".to_string(),
         }
         .fmt(f)
     }
